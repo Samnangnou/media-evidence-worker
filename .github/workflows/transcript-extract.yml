@@ -1,0 +1,27 @@
+name: Transcript Extract
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload_json:
+        description: Narrow extraction dispatch payload JSON
+        required: true
+        type: string
+
+jobs:
+  transcript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Extract transcript and callback
+        run: python scripts/run_transcript_job.py --payload-json '${{ inputs.payload_json }}'
