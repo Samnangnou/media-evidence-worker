@@ -12,5 +12,13 @@ Allowed here:
 - open-source tooling integration
 - generic payload schemas
 - generic callback logic
+Not allowed here:
+
+- private application logic
+- newsroom ranking logic
+- Telegram logic
+- Supabase service-role patterns
+- internal prompts or business rules
+- real secrets or environment values
 
 This repository is intended to be triggered by a private control plane and return narrow extraction results through a signed callback.
