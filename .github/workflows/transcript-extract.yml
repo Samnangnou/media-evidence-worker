@@ -31,6 +31,15 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -n 1
 
+      - name: Write YouTube cookies
+        if: ${{ secrets.YOUTUBE_COOKIES_NETSCAPE != '' }}
+        run: |
+          cat > /tmp/ytcookies.txt <<'EOF'
+          ${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
+          EOF
+          chmod 600 /tmp/ytcookies.txt
+          echo "YOUTUBE_COOKIES_FILE=/tmp/ytcookies.txt" >> "$GITHUB_ENV"
+
       - name: Set up bgutil POT provider
         run: |
           git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil-ytdlp-pot-provider

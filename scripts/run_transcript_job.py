@@ -49,6 +49,7 @@ def read_vtt_as_text(path: Path) -> str:
 
 def extract_subtitles(url: str) -> tuple[str | None, str | None]:
     with tempfile.TemporaryDirectory() as tmpdir:
+        cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "").strip()
         strategies = [
             {
                 "name": "android_auto",
@@ -84,6 +85,7 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
                 "yt-dlp",
                 "-v",
                 "--no-update",
+                *(["--cookies", cookies_file] if cookies_file else []),
                 "--skip-download",
                 "--write-subs",
                 "--write-auto-subs",
