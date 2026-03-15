@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 import requests
+from youtube_transcript_api import YouTubeTranscriptApi
 
 
 def run(cmd):
@@ -104,7 +105,30 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
             combined = "\n".join(part for part in [result.stderr.strip(), result.stdout.strip()] if part).strip()
             errors.append(f"[{strategy['name']}] {combined or 'No subtitles produced.'}")
 
+        transcript, transcript_error = extract_transcript_api(url)
+        if transcript:
+            return transcript, None
+        if transcript_error:
+            errors.append(f"[youtube_transcript_api] {transcript_error}")
+
         return None, "yt-dlp failed across strategies:\n" + "\n\n".join(errors)
+
+
+def extract_video_id(url: str) -> str | None:
+    match = re.search(r"(?:v=|youtu\\.be/|/shorts/)([A-Za-z0-9_-]{6,})", url)
+    return match.group(1) if match else None
+
+
+def extract_transcript_api(url: str) -> tuple[str | None, str | None]:
+    video_id = extract_video_id(url)
+    if not video_id:
+        return None, "Unable to determine video ID for youtube-transcript-api."
+    try:
+        snippets = YouTubeTranscriptApi().fetch(video_id, languages=["en"])
+        text = " ".join(getattr(item, "text", "").strip() for item in snippets if getattr(item, "text", "").strip()).strip()
+        return (text or None), None if text else "youtube-transcript-api returned no transcript text."
+    except Exception as error:
+        return None, str(error)
 
 
 def main():
