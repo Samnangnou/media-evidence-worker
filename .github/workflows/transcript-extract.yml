@@ -7,6 +7,9 @@ on:
         description: Narrow extraction dispatch payload JSON
         required: true
         type: string
+  repository_dispatch:
+    types:
+      - transcript_extract
 
 jobs:
   transcript:
@@ -59,7 +62,9 @@ EOF
         run: pip install -r requirements.txt
 
       - name: Extract transcript and callback
-        run: python scripts/run_transcript_job.py --payload-json '${{ inputs.payload_json }}'
+        env:
+          PAYLOAD_JSON: ${{ inputs.payload_json || github.event.client_payload.payload_json }}
+        run: python scripts/run_transcript_job.py --payload-json "$PAYLOAD_JSON"
 
       - name: Dump bgutil logs on failure
         if: failure()
