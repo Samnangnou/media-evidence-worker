@@ -50,6 +50,7 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
         output_template = os.path.join(tmpdir, "%(id)s.%(ext)s")
         cmd = [
             "yt-dlp",
+            "-v",
             "--no-update",
             "--skip-download",
             "--write-subs",
@@ -68,7 +69,8 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
         ]
         result = run(cmd)
         if result.returncode != 0:
-            return None, f"yt-dlp failed: {result.stderr.strip() or result.stdout.strip()}"
+            combined = "\n".join(part for part in [result.stderr.strip(), result.stdout.strip()] if part).strip()
+            return None, f"yt-dlp failed: {combined}"
 
         subtitle_files = sorted(Path(tmpdir).glob("*.vtt"))
         if not subtitle_files:
