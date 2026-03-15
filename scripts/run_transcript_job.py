@@ -47,41 +47,64 @@ def read_vtt_as_text(path: Path) -> str:
 
 def extract_subtitles(url: str) -> tuple[str | None, str | None]:
     with tempfile.TemporaryDirectory() as tmpdir:
-        output_template = os.path.join(tmpdir, "%(id)s.%(ext)s")
-        cmd = [
-            "yt-dlp",
-            "-v",
-            "--no-update",
-            "--skip-download",
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs",
-            "en-orig,en.*,en",
-            "--sub-format",
-            "vtt",
-            "--extractor-args",
-            "youtube:player_client=web",
-            "--extractor-args",
-            f"youtubepot-bgutilhttp:base_url={os.environ.get('BGUTIL_BASE_URL', 'http://127.0.0.1:4416')}",
-            "-o",
-            output_template,
-            url,
+        strategies = [
+            {
+                "name": "android_auto",
+                "args": [
+                    "--extractor-args",
+                    "youtube:player_client=android",
+                ],
+            },
+            {
+                "name": "android_tv_combo",
+                "args": [
+                    "--extractor-args",
+                    "youtube:player_client=tv_embedded,android",
+                ],
+            },
+            {
+                "name": "web_bgutil",
+                "args": [
+                    "--extractor-args",
+                    "youtube:player_client=web",
+                    "--extractor-args",
+                    f"youtubepot-bgutilhttp:base_url={os.environ.get('BGUTIL_BASE_URL', 'http://127.0.0.1:4416')}",
+                ],
+            },
         ]
-        result = run(cmd)
-        if result.returncode != 0:
+
+        errors = []
+        for strategy in strategies:
+            strategy_dir = os.path.join(tmpdir, strategy["name"])
+            os.makedirs(strategy_dir, exist_ok=True)
+            output_template = os.path.join(strategy_dir, "%(id)s.%(ext)s")
+            cmd = [
+                "yt-dlp",
+                "-v",
+                "--no-update",
+                "--skip-download",
+                "--write-subs",
+                "--write-auto-subs",
+                "--sub-langs",
+                "en-orig,en.*,en",
+                "--sub-format",
+                "vtt",
+                *strategy["args"],
+                "-o",
+                output_template,
+                url,
+            ]
+            result = run(cmd)
+            subtitle_files = sorted(Path(strategy_dir).glob("*.vtt"))
+            for subtitle_path in subtitle_files:
+                transcript = read_vtt_as_text(subtitle_path)
+                if transcript:
+                    return transcript, None
+
             combined = "\n".join(part for part in [result.stderr.strip(), result.stdout.strip()] if part).strip()
-            return None, f"yt-dlp failed: {combined}"
+            errors.append(f"[{strategy['name']}] {combined or 'No subtitles produced.'}")
 
-        subtitle_files = sorted(Path(tmpdir).glob("*.vtt"))
-        if not subtitle_files:
-            return None, "No VTT subtitles were produced by yt-dlp."
-
-        for subtitle_path in subtitle_files:
-            transcript = read_vtt_as_text(subtitle_path)
-            if transcript:
-                return transcript, None
-
-        return None, "Subtitle files were present but no transcript text was extracted."
+        return None, "yt-dlp failed across strategies:\n" + "\n\n".join(errors)
 
 
 def main():
