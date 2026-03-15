@@ -20,8 +20,29 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up bgutil POT provider
+        run: |
+          git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil-ytdlp-pot-provider
+          cd /tmp/bgutil-ytdlp-pot-provider/server
+          npm ci
+          npx tsc
+          node build/main.js > /tmp/bgutil.log 2>&1 &
+          echo $! > /tmp/bgutil.pid
+          echo "BGUTIL_BASE_URL=http://127.0.0.1:4416" >> "$GITHUB_ENV"
+          sleep 3
+          curl -fsS http://127.0.0.1:4416/ping
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Extract transcript and callback
         run: python scripts/run_transcript_job.py --payload-json '${{ inputs.payload_json }}'
+
+      - name: Dump bgutil logs on failure
+        if: failure()
+        run: cat /tmp/bgutil.log || true

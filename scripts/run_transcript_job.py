@@ -50,6 +50,7 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
         output_template = os.path.join(tmpdir, "%(id)s.%(ext)s")
         cmd = [
             "yt-dlp",
+            "--no-update",
             "--skip-download",
             "--write-subs",
             "--write-auto-subs",
@@ -59,6 +60,8 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
             "vtt",
             "--extractor-args",
             "youtube:player_client=android",
+            "--extractor-args",
+            f"youtubepot-bgutilhttp:base_url={os.environ.get('BGUTIL_BASE_URL', 'http://127.0.0.1:4416')}",
             "-o",
             output_template,
             url,
