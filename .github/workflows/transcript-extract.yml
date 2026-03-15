@@ -32,13 +32,16 @@ jobs:
           ffmpeg -version | head -n 1
 
       - name: Write YouTube cookies
-        if: ${{ secrets.YOUTUBE_COOKIES_NETSCAPE != '' }}
         run: |
-          cat > /tmp/ytcookies.txt <<'EOF'
-          ${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
-          EOF
-          chmod 600 /tmp/ytcookies.txt
-          echo "YOUTUBE_COOKIES_FILE=/tmp/ytcookies.txt" >> "$GITHUB_ENV"
+          if [ -n "${YOUTUBE_COOKIES_NETSCAPE:-}" ]; then
+            cat > /tmp/ytcookies.txt <<'EOF'
+${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
+EOF
+            chmod 600 /tmp/ytcookies.txt
+            echo "YOUTUBE_COOKIES_FILE=/tmp/ytcookies.txt" >> "$GITHUB_ENV"
+          fi
+        env:
+          YOUTUBE_COOKIES_NETSCAPE: ${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
 
       - name: Set up bgutil POT provider
         run: |
