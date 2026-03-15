@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 import requests
+from faster_whisper import WhisperModel
 from youtube_transcript_api import YouTubeTranscriptApi
 
 
@@ -131,6 +132,37 @@ def extract_transcript_api(url: str) -> tuple[str | None, str | None]:
         return None, str(error)
 
 
+def extract_audio_transcript(video_url: str) -> tuple[str | None, str | None]:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        audio_path = os.path.join(tmpdir, "audio.wav")
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_url,
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-f",
+            "wav",
+            audio_path,
+        ]
+        ffmpeg_result = run(ffmpeg_cmd)
+        if ffmpeg_result.returncode != 0:
+            combined = "\n".join(part for part in [ffmpeg_result.stderr.strip(), ffmpeg_result.stdout.strip()] if part).strip()
+            return None, f"ffmpeg failed: {combined}"
+
+        try:
+            model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+            segments, _info = model.transcribe(audio_path, vad_filter=True, beam_size=1)
+            text = " ".join(segment.text.strip() for segment in segments if segment.text.strip()).strip()
+            return (text or None), None if text else "faster-whisper returned no transcript text."
+        except Exception as error:
+            return None, f"faster-whisper failed: {error}"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--payload-json", required=True)
@@ -145,13 +177,31 @@ def main():
     error_message = None
     completed = []
     failed = []
+    transcript_source = None
 
     if "subtitles" in operations:
         transcript, error_message = extract_subtitles(payload["canonical_url"])
         if transcript:
             completed.append("subtitles")
+            transcript_source = "yt_dlp_subtitles"
         else:
             failed.append("subtitles")
+
+    if not transcript and "audio_transcript" in operations:
+        video_url = (((payload.get("metadata") or {}).get("youtube_context") or {}).get("videoUrl") or "").strip()
+        if video_url:
+            transcript, audio_error = extract_audio_transcript(video_url)
+            if transcript:
+                completed.append("audio_transcript")
+                transcript_source = "faster_whisper_audio"
+                error_message = None
+            else:
+                failed.append("audio_transcript")
+                error_message = f"{error_message}\n\n[audio_transcript] {audio_error}".strip() if error_message else audio_error
+        else:
+            failed.append("audio_transcript")
+            missing_video_error = "No videoUrl was available for audio transcript fallback."
+            error_message = f"{error_message}\n\n[audio_transcript] {missing_video_error}".strip() if error_message else missing_video_error
 
     callback_payload = {
         "schema_version": "v1",
@@ -163,7 +213,7 @@ def main():
         "operations_failed": failed,
         "evidence_updates": {
             "transcript": transcript,
-            "transcript_source": "yt_dlp_subtitles" if transcript else None,
+            "transcript_source": transcript_source if transcript else None,
         },
         "error_message": error_message,
     }
