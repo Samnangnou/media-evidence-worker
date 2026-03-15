@@ -59,7 +59,7 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
             "--sub-format",
             "vtt",
             "--extractor-args",
-            "youtube:player_client=android",
+            "youtube:player_client=web",
             "--extractor-args",
             f"youtubepot-bgutilhttp:base_url={os.environ.get('BGUTIL_BASE_URL', 'http://127.0.0.1:4416')}",
             "-o",
