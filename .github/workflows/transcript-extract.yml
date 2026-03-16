@@ -1,4 +1,4 @@
-name: Transcript Extract
+name: Media Evidence Extract
 
 on:
   workflow_dispatch:
@@ -28,11 +28,12 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install ffmpeg
+      - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg tesseract-ocr
           ffmpeg -version | head -n 1
+          tesseract --version | head -n 1
 
       - name: Write YouTube cookies
         run: |
@@ -61,10 +62,10 @@ EOF
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Extract transcript and callback
+      - name: Run extraction job and callback
         env:
           PAYLOAD_JSON: ${{ inputs.payload_json || github.event.client_payload.payload_json }}
-        run: python scripts/run_transcript_job.py --payload-json "$PAYLOAD_JSON"
+        run: python scripts/run_extraction_job.py --payload-json "$PAYLOAD_JSON"
 
       - name: Dump bgutil logs on failure
         if: failure()
