@@ -24,6 +24,7 @@ FRAME_OPS = {"keyframes", "ocr"}
 UNSUPPORTED_OPS = {"vision"}
 DEFAULT_FRAME_COUNT = 3
 DEFAULT_FRAME_FPS = "fps=1/20,scale=480:-1"
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -453,6 +454,63 @@ def resolve_video_url(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def is_image_url(url: str | None) -> bool:
+    candidate = normalize_text(url)
+    if not candidate.startswith("http://") and not candidate.startswith("https://"):
+        return False
+    parsed = urlparse(candidate)
+    return Path(parsed.path).suffix.lower() in IMAGE_EXTENSIONS
+
+
+def download_remote_asset(url: str, suffix: str | None = None) -> tuple[Path | None, str | None]:
+    request_kwargs = {
+        "headers": {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "*/*",
+        },
+        "timeout": 30,
+        "stream": True,
+    }
+    try:
+        response = requests.get(url, **request_kwargs)
+    except requests.exceptions.SSLError:
+        response = requests.get(url, verify=False, **request_kwargs)
+    except Exception as error:  # pragma: no cover - network/provider behavior
+        return None, str(error)
+
+    if not response.ok:
+        return None, f"asset fetch failed with HTTP {response.status_code}"
+
+    parsed = urlparse(url)
+    ext = suffix or Path(parsed.path).suffix.lower() or ".bin"
+    tmpdir = tempfile.mkdtemp()
+    path = Path(tmpdir) / f"asset{ext}"
+    with path.open("wb") as fh:
+        for chunk in response.iter_content(chunk_size=65536):
+            if chunk:
+                fh.write(chunk)
+    return path, None
+
+
+def build_image_artifact(path: Path) -> dict[str, Any]:
+    data = path.read_bytes()
+    encoded = base64.b64encode(data).decode("ascii")
+    mime = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return {
+        "kind": "image",
+        "url": f"data:{mime};base64,{encoded}",
+        "timestamp_ms": 0,
+    }
+
+
 def extract_keyframes(video_url: str) -> tuple[list[dict[str, Any]], list[Path], str | None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         output_pattern = os.path.join(tmpdir, "frame-%03d.jpg")
@@ -591,7 +649,22 @@ def execute_job(payload: dict[str, Any]) -> JobResult:
     if FRAME_OPS & operations:
         video_url = resolve_video_url(payload)
         debug["frame_video_url_available"] = bool(video_url)
-        if video_url:
+        canonical_url = normalize_text(payload.get("canonical_url"))
+        if is_image_url(canonical_url):
+            image_path, image_error = download_remote_asset(canonical_url)
+            if image_path:
+                frame_artifacts = [build_image_artifact(image_path)]
+                frame_paths = [image_path]
+                if "keyframes" in operations:
+                    completed.append("keyframes")
+            else:
+                if "keyframes" in operations:
+                    failed.append("keyframes")
+                    error_messages.append(f"[keyframes] {image_error or 'No image asset available.'}")
+                if "ocr" in operations:
+                    failed.append("ocr")
+                    error_messages.append(f"[ocr] {image_error or 'No image asset available.'}")
+        elif video_url:
             frame_artifacts, frame_paths, frame_error = extract_keyframes(video_url)
             if frame_artifacts:
                 completed.append("keyframes")
