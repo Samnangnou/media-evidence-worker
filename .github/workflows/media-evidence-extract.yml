@@ -6,7 +6,6 @@ on:
       payload_json:
         description: Narrow extraction dispatch payload JSON
         required: true
-        type: string
   repository_dispatch:
     types:
       - transcript_extract
@@ -23,48 +22,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install system tools
+      - name: Resolve payload
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg tesseract-ocr
-          ffmpeg -version | head -n 1
-          tesseract --version | head -n 1
-
-      - name: Write YouTube cookies
-        run: |
-          if [ -n "${YOUTUBE_COOKIES_NETSCAPE:-}" ]; then
-            cat > /tmp/ytcookies.txt <<'EOF'
-${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
-EOF
-            chmod 600 /tmp/ytcookies.txt
-            echo "YOUTUBE_COOKIES_FILE=/tmp/ytcookies.txt" >> "$GITHUB_ENV"
-          fi
-        env:
-          YOUTUBE_COOKIES_NETSCAPE: ${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
-
-      - name: Set up bgutil POT provider
-        run: |
-          git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil-ytdlp-pot-provider
-          cd /tmp/bgutil-ytdlp-pot-provider/server
-          npm ci
-          npx tsc
-          node build/main.js > /tmp/bgutil.log 2>&1 &
-          echo $! > /tmp/bgutil.pid
-          echo "BGUTIL_BASE_URL=http://127.0.0.1:4416" >> "$GITHUB_ENV"
-          sleep 3
-          curl -fsS http://127.0.0.1:4416/ping
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run extraction job and callback
-        run: |
-          PAYLOAD_JSON="$(python3 - <<'PY'
+          python3 - <<'PY'
           import json
           import os
 
@@ -74,13 +34,21 @@ EOF
               event = json.load(fh)
 
           if event_name == "repository_dispatch":
-              print(event.get("client_payload", {}).get("payload_json", ""))
+              payload = event.get("client_payload", {}).get("payload_json", "")
           else:
-              print(event.get("inputs", {}).get("payload_json", ""))
-          PY
-          )"
-          python scripts/run_extraction_job.py --payload-json "$PAYLOAD_JSON"
+              payload = event.get("inputs", {}).get("payload_json", "")
 
-      - name: Dump bgutil logs on failure
-        if: failure()
-        run: cat /tmp/bgutil.log || true
+          if not payload:
+              raise SystemExit("Missing payload_json")
+
+          with open("/tmp/payload.json", "w", encoding="utf-8") as out:
+              out.write(payload)
+
+          print("payload_ready")
+          PY
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run extraction job and callback
+        run: python scripts/run_extraction_job.py --payload-json "$(cat /tmp/payload.json)"
