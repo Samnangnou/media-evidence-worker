@@ -63,9 +63,6 @@ EOF
         run: pip install -r requirements.txt
 
       - name: Run extraction job and callback
-        env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_EVENT_PATH: ${{ github.event_path }}
         run: |
           PAYLOAD_JSON="$(python3 - <<'PY'
           import json
