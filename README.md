@@ -27,9 +27,4 @@ Supported extraction operations today:
 - `linked_pages`
 - `keyframes`
 - `ocr`
-
-Current non-goal in this public repo:
-
-- semantic `vision` summarization
-
-That remains a downstream AI-plane responsibility and should not contain private product logic in this repository.
+- `vision`

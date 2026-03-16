@@ -21,7 +21,8 @@ import requests
 TRANSCRIPT_OPS = {"subtitles", "audio_transcript"}
 LINKED_PAGE_OPS = {"linked_pages"}
 FRAME_OPS = {"keyframes", "ocr"}
-UNSUPPORTED_OPS = {"vision"}
+VISION_OPS = {"vision"}
+UNSUPPORTED_OPS: set[str] = set()
 DEFAULT_FRAME_COUNT = 3
 DEFAULT_FRAME_FPS = "fps=1/20,scale=480:-1"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -581,6 +582,56 @@ def extract_ocr_text(frame_paths: list[Path]) -> tuple[str | None, str | None]:
     return None, "No OCR text extracted."
 
 
+def summarize_visual_semantics(frame_artifacts: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    nvidia_key = os.environ.get("NVIDIA_API_KEY", "").strip()
+    if not nvidia_key:
+        return None, "NVIDIA_API_KEY is not configured for vision summarization."
+    image_parts = []
+    for artifact in frame_artifacts[:3]:
+        url = normalize_text((artifact or {}).get("url"))
+        if url.startswith("data:image/"):
+            image_parts.append({"type": "image_url", "image_url": {"url": url}})
+    if not image_parts:
+        return None, "No frame artifacts were available for vision summarization."
+
+    body = {
+        "model": "meta/llama-3.2-11b-vision-instruct",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Describe only what is visibly shown in these images in 1 to 3 short factual sentences. Mention clearly visible text if present. Do not speculate.",
+                    },
+                    *image_parts,
+                ],
+            }
+        ],
+        "max_tokens": 200,
+        "temperature": 0.1,
+    }
+
+    try:
+        response = requests.post(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {nvidia_key}",
+            },
+            data=json.dumps(body),
+            timeout=60,
+        )
+        if not response.ok:
+            return None, f"NVIDIA vision request failed with HTTP {response.status_code}: {response.text[:300]}"
+        data = response.json()
+        content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content"))
+        summary = normalize_text(content if isinstance(content, str) else "")
+        return (summary or None), None if summary else "NVIDIA vision returned no summary text."
+    except Exception as error:  # pragma: no cover - provider behavior
+        return None, str(error)
+
+
 def determine_status(completed: list[str], failed: list[str]) -> str:
     if completed and failed:
         return "partial"
@@ -606,6 +657,7 @@ def execute_job(payload: dict[str, Any]) -> JobResult:
     transcript_source: str | None = None
     linked_urls: list[str] = []
     ocr_text: str | None = None
+    vision_summary: str | None = None
     frame_artifacts: list[dict[str, Any]] = []
     error_messages: list[str] = []
     completed: list[str] = []
@@ -693,6 +745,19 @@ def execute_job(payload: dict[str, Any]) -> JobResult:
             for frame_path in frame_paths:
                 frame_path.unlink(missing_ok=True)
 
+    if VISION_OPS & operations:
+        if frame_artifacts:
+            vision_summary, vision_error = summarize_visual_semantics(frame_artifacts)
+            if vision_summary:
+                completed.append("vision")
+            else:
+                failed.append("vision")
+                if vision_error:
+                    error_messages.append(f"[vision] {vision_error}")
+        else:
+            failed.append("vision")
+            error_messages.append("[vision] No frame artifacts were available for vision summarization.")
+
     if UNSUPPORTED_OPS & operations:
         for operation in sorted(UNSUPPORTED_OPS & operations):
             failed.append(operation)
@@ -711,7 +776,7 @@ def execute_job(payload: dict[str, Any]) -> JobResult:
             "transcript_source": transcript_source if transcript else None,
             "linked_urls": linked_urls or [],
             "ocr_text": ocr_text,
-            "vision_summary": None,
+            "vision_summary": vision_summary,
             "frame_artifacts": frame_artifacts,
         },
         "debug": debug,

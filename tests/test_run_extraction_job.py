@@ -97,7 +97,7 @@ class RunExtractionJobTests(unittest.TestCase):
         self.assertEqual(result.callback_payload["operations_completed"], ["linked_pages"])
         self.assertEqual(result.callback_payload["operations_failed"], ["vision"])
         self.assertEqual(result.callback_payload["evidence_updates"]["linked_urls"], ["https://example.com/a"])
-        self.assertIn("Not implemented", result.callback_payload["error_message"])
+        self.assertIn("No frame artifacts", result.callback_payload["error_message"])
 
     def test_extract_ocr_text_aggregates_tesseract_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -195,6 +195,36 @@ class RunExtractionJobTests(unittest.TestCase):
         self.assertEqual(result.callback_payload["operations_completed"], ["keyframes", "ocr"])
         self.assertEqual(result.callback_payload["evidence_updates"]["ocr_text"], "HELLO OCR")
         self.assertEqual(result.callback_payload["evidence_updates"]["frame_artifacts"], [artifact])
+
+    def test_execute_job_handles_vision_summary(self):
+        payload = {
+            "schema_version": "v1",
+            "dispatch_id": "dispatch-vision",
+            "candidate_id": "candidate-vision",
+            "candidate_key": "candidate-key-vision",
+            "canonical_url": "https://example.com/ocr.png",
+            "callback_url": "https://callback.test/extraction",
+            "callback_signature": "sig",
+            "operations": ["keyframes", "vision"],
+            "metadata": {},
+        }
+
+        fake_image = Path(tempfile.gettempdir()) / "vision-test.png"
+        fake_image.write_bytes(b"fake")
+        artifact = {
+            "kind": "image",
+            "url": "data:image/png;base64,ZmFrZQ==",
+            "timestamp_ms": 0,
+        }
+
+        with patch.object(run_extraction_job, "download_remote_asset", return_value=(fake_image, None)):
+            with patch.object(run_extraction_job, "build_image_artifact", return_value=artifact):
+                with patch.object(run_extraction_job, "summarize_visual_semantics", return_value=("A white banner with black text saying HELLO OCR READY.", None)):
+                    result = run_extraction_job.execute_job(payload)
+
+        self.assertEqual(result.callback_payload["status"], "success")
+        self.assertEqual(result.callback_payload["operations_completed"], ["keyframes", "vision"])
+        self.assertEqual(result.callback_payload["evidence_updates"]["vision_summary"], "A white banner with black text saying HELLO OCR READY.")
 
     def test_execute_job_uses_same_runner_audio_fallback(self):
         payload = {
