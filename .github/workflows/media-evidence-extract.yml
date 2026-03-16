@@ -78,4 +78,6 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run extraction job and callback
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: python scripts/run_extraction_job.py --payload-json "$(cat /tmp/payload.json)"
