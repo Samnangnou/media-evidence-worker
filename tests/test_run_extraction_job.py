@@ -165,6 +165,33 @@ class RunExtractionJobTests(unittest.TestCase):
         self.assertEqual(result.callback_payload["evidence_updates"]["ocr_text"], "Detected text")
         self.assertEqual(result.callback_payload["evidence_updates"]["frame_artifacts"], artifacts)
 
+    def test_execute_job_uses_same_runner_audio_fallback(self):
+        payload = {
+            "schema_version": "v1",
+            "dispatch_id": "dispatch-3",
+            "candidate_id": "candidate-3",
+            "candidate_key": "candidate-key-3",
+            "canonical_url": "https://www.youtube.com/watch?v=abc123",
+            "callback_url": "https://callback.test/extraction",
+            "callback_signature": "sig",
+            "operations": ["subtitles", "audio_transcript"],
+            "metadata": {
+                "youtube_context": {
+                    "videoUrl": "https://cdn.example.com/video.mp4"
+                }
+            },
+        }
+
+        with patch.object(run_extraction_job, "extract_subtitles", return_value=(None, "subtitles failed")):
+            with patch.object(run_extraction_job, "extract_audio_transcript", return_value=("Recovered transcript", None)) as mock_audio:
+                result = run_extraction_job.execute_job(payload)
+
+        self.assertEqual(result.callback_payload["status"], "partial")
+        self.assertEqual(result.callback_payload["operations_completed"], ["audio_transcript"])
+        self.assertEqual(result.callback_payload["operations_failed"], ["subtitles"])
+        self.assertEqual(result.callback_payload["evidence_updates"]["transcript"], "Recovered transcript")
+        mock_audio.assert_called_once_with("https://www.youtube.com/watch?v=abc123", "https://cdn.example.com/video.mp4")
+
 
 if __name__ == "__main__":
     unittest.main()
