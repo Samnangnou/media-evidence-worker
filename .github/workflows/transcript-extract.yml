@@ -64,15 +64,24 @@ EOF
 
       - name: Run extraction job and callback
         env:
-          WORKFLOW_PAYLOAD_JSON: ${{ inputs.payload_json }}
-          REPOSITORY_PAYLOAD_JSON: ${{ github.event.client_payload.payload_json }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "repository_dispatch" ]; then
-            PAYLOAD_JSON="$REPOSITORY_PAYLOAD_JSON"
-          else
-            PAYLOAD_JSON="$WORKFLOW_PAYLOAD_JSON"
-          fi
+          PAYLOAD_JSON="$(python3 - <<'PY'
+          import json
+          import os
+
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          event_path = os.environ["GITHUB_EVENT_PATH"]
+          with open(event_path, "r", encoding="utf-8") as fh:
+              event = json.load(fh)
+
+          if event_name == "repository_dispatch":
+              print(event.get("client_payload", {}).get("payload_json", ""))
+          else:
+              print(event.get("inputs", {}).get("payload_json", ""))
+          PY
+          )"
           python scripts/run_extraction_job.py --payload-json "$PAYLOAD_JSON"
 
       - name: Dump bgutil logs on failure
