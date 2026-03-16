@@ -192,6 +192,44 @@ class RunExtractionJobTests(unittest.TestCase):
         self.assertEqual(result.callback_payload["evidence_updates"]["transcript"], "Recovered transcript")
         mock_audio.assert_called_once_with("https://www.youtube.com/watch?v=abc123", "https://cdn.example.com/video.mp4")
 
+    def test_extract_watch_page_transcript_parses_timedtext(self):
+        html = """
+        <script>
+        var ytInitialPlayerResponse = {
+          "captions": {
+            "playerCaptionsTracklistRenderer": {
+              "captionTracks": [
+                {"baseUrl": "https://example.com/timedtext?lang=en", "languageCode": "en"}
+              ]
+            }
+          }
+        };
+        </script>
+        """
+
+        class Response:
+            def __init__(self, ok=True, status_code=200, text=""):
+                self.ok = ok
+                self.status_code = status_code
+                self.text = text
+
+        class Session:
+            def __init__(self):
+                self.calls = []
+            def get(self, url, **kwargs):
+                self.calls.append(url)
+                if "timedtext" in url:
+                    return Response(text='{"events":[{"segs":[{"utf8":"Hello"},{"utf8":"world"}]}]}')
+                return Response(text=html)
+            def close(self):
+                return None
+
+        with patch.object(run_extraction_job, "build_cookie_session", return_value=Session()):
+            transcript, error = run_extraction_job.extract_watch_page_transcript("https://youtube.test/watch?v=abc")
+
+        self.assertEqual(transcript, "Hello world")
+        self.assertIsNone(error)
+
 
 if __name__ == "__main__":
     unittest.main()

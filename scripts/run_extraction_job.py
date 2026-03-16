@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import base64
+import http.cookiejar
 import json
 import os
 import re
@@ -88,6 +89,28 @@ def read_vtt_as_text(path: Path) -> str:
     return " ".join(deduped).strip()
 
 
+def parse_youtube_transcript_json(payload: Any) -> str | None:
+    events = payload.get("events") if isinstance(payload, dict) else []
+    parts: list[str] = []
+    for event in events or []:
+        segs = event.get("segs") if isinstance(event, dict) else []
+        for seg in segs or []:
+            text = normalize_text((seg or {}).get("utf8"))
+            if text:
+                parts.append(text)
+    text = normalize_text(" ".join(parts))
+    return text or None
+
+
+def parse_youtube_transcript_xml(payload: str) -> str | None:
+    parts = [
+        normalize_text(match.group(1))
+        for match in re.finditer(r"<text[^>]*>([\s\S]*?)</text>", str(payload or ""), re.I)
+    ]
+    text = normalize_text(" ".join(part for part in parts if part))
+    return text or None
+
+
 def extract_video_id(url: str) -> str | None:
     match = re.search(r"(?:v=|youtu\.be/|/shorts/)([A-Za-z0-9_-]{6,})", url)
     return match.group(1) if match else None
@@ -109,6 +132,70 @@ def extract_transcript_api(url: str) -> tuple[str | None, str | None]:
         return (text or None), None if text else "youtube-transcript-api returned no transcript text."
     except Exception as error:  # pragma: no cover - network/provider behavior
         return None, str(error)
+
+
+def build_cookie_session() -> requests.Session:
+    session = requests.Session()
+    cookies_file = os.environ.get("YOUTUBE_COOKIES_FILE", "").strip()
+    if cookies_file and os.path.exists(cookies_file):
+        jar = http.cookiejar.MozillaCookieJar()
+        jar.load(cookies_file, ignore_discard=True, ignore_expires=True)
+        session.cookies.update(jar)
+    return session
+
+
+def extract_watch_page_transcript(url: str) -> tuple[str | None, str | None]:
+    session = build_cookie_session()
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.youtube.com/",
+    }
+    try:
+        response = session.get(url, headers=headers, timeout=30)
+        if not response.ok:
+            return None, f"watch page fetch failed with HTTP {response.status_code}"
+
+        match = re.search(r"ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\});", response.text)
+        if not match:
+            return None, "ytInitialPlayerResponse not found in watch page HTML."
+
+        player = json.loads(match.group(1))
+        caption_tracks = (((player or {}).get("captions") or {}).get("playerCaptionsTracklistRenderer") or {}).get("captionTracks") or []
+        if not caption_tracks:
+            return None, "No caption tracks found in watch page player response."
+
+        preferred = (
+            next((track for track in caption_tracks if re.match(r"^en(?:-|$)", str(track.get("languageCode", ""))) and not track.get("kind")), None)
+            or next((track for track in caption_tracks if re.match(r"^en(?:-|$)", str(track.get("languageCode", "")))), None)
+            or next((track for track in caption_tracks if not track.get("kind")), None)
+            or caption_tracks[0]
+        )
+        base_url = str(preferred.get("baseUrl", "")).strip()
+        if not base_url:
+            return None, "Preferred caption track did not include a baseUrl."
+
+        transcript_url = f"{base_url}&fmt=json3" if "?" in base_url else f"{base_url}?fmt=json3"
+        transcript_response = session.get(transcript_url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.youtube.com/"}, timeout=30)
+        if not transcript_response.ok:
+            return None, f"timedtext fetch failed with HTTP {transcript_response.status_code}"
+
+        raw = transcript_response.text.strip()
+        if not raw:
+            return None, "timedtext response was empty."
+
+        transcript = None
+        try:
+            transcript = parse_youtube_transcript_json(json.loads(raw))
+        except Exception:
+            transcript = parse_youtube_transcript_xml(raw)
+
+        return (transcript or None), None if transcript else "timedtext payload did not contain transcript text."
+    except Exception as error:  # pragma: no cover - network/provider behavior
+        return None, str(error)
+    finally:
+        session.close()
 
 
 def extract_subtitles(url: str) -> tuple[str | None, str | None]:
@@ -179,6 +266,12 @@ def extract_subtitles(url: str) -> tuple[str | None, str | None]:
             return transcript, None
         if transcript_error:
             errors.append(f"[youtube_transcript_api] {transcript_error}")
+
+        transcript, watch_page_error = extract_watch_page_transcript(url)
+        if transcript:
+            return transcript, None
+        if watch_page_error:
+            errors.append(f"[watch_page] {watch_page_error}")
 
         return None, "yt-dlp failed across strategies:\n" + "\n\n".join(errors)
 
