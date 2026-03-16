@@ -30,13 +30,21 @@ jobs:
 
       - name: Write YouTube cookies
         run: |
-          if [ -n "${YOUTUBE_COOKIES_NETSCAPE:-}" ]; then
-            cat > /tmp/ytcookies.txt <<'EOF'
-${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
-EOF
-            chmod 600 /tmp/ytcookies.txt
-            echo "YOUTUBE_COOKIES_FILE=/tmp/ytcookies.txt" >> "$GITHUB_ENV"
-          fi
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          cookies = os.environ.get("YOUTUBE_COOKIES_NETSCAPE", "")
+          if not cookies:
+              raise SystemExit(0)
+
+          path = Path("/tmp/ytcookies.txt")
+          path.write_text(cookies, encoding="utf-8")
+          path.chmod(0o600)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+              fh.write("YOUTUBE_COOKIES_FILE=/tmp/ytcookies.txt\n")
+          PY
         env:
           YOUTUBE_COOKIES_NETSCAPE: ${{ secrets.YOUTUBE_COOKIES_NETSCAPE }}
 
