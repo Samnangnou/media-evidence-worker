@@ -220,25 +220,28 @@ def extract_audio_transcript(video_url: str) -> tuple[str | None, str | None]:
 
 def fetch_linked_pages(canonical_url: str, metadata: dict[str, Any] | None) -> tuple[list[str], str | None]:
     urls = extract_urls_from_text(((metadata or {}).get("youtube_context") or {}).get("description"))
+    request_kwargs = {
+        "headers": {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+        "timeout": 30,
+    }
     try:
-        response = requests.get(
-            canonical_url,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "text/html,application/xhtml+xml",
-            },
-            timeout=30,
-        )
-        if response.ok and response.text.strip():
-            parser = LinkExtractor(canonical_url)
-            parser.feed(response.text)
-            urls.extend(parser.links)
-        elif response.status_code >= 400:
-            return dedupe_urls(urls), f"linked page fetch failed with HTTP {response.status_code}"
+        response = requests.get(canonical_url, **request_kwargs)
+    except requests.exceptions.SSLError:
+        response = requests.get(canonical_url, verify=False, **request_kwargs)
     except Exception as error:  # pragma: no cover - network/provider behavior
         if urls:
             return dedupe_urls(urls), str(error)
         return [], str(error)
+
+    if response.ok and response.text.strip():
+        parser = LinkExtractor(canonical_url)
+        parser.feed(response.text)
+        urls.extend(parser.links)
+    elif response.status_code >= 400:
+        return dedupe_urls(urls), f"linked page fetch failed with HTTP {response.status_code}"
 
     return dedupe_urls(urls), None
 

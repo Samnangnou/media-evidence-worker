@@ -49,6 +49,30 @@ class RunExtractionJobTests(unittest.TestCase):
             "https://example.com/internal",
         ])
 
+    def test_fetch_linked_pages_retries_without_ssl_verification_on_ssl_error(self):
+        html = "<html><body><a href=\"https://example.com/report\">Report</a></body></html>"
+
+        class Response:
+            ok = True
+            status_code = 200
+            text = html
+
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise run_extraction_job.requests.exceptions.SSLError("ssl failed")
+            return Response()
+
+        with patch.object(run_extraction_job.requests, "get", side_effect=fake_get):
+            urls, error = run_extraction_job.fetch_linked_pages("https://example.com", {})
+
+        self.assertIsNone(error)
+        self.assertEqual(urls, ["https://example.com/report"])
+        self.assertNotIn("verify", calls[0])
+        self.assertEqual(calls[1]["verify"], False)
+
     def test_execute_job_builds_partial_callback_for_supported_and_unsupported_ops(self):
         payload = {
             "schema_version": "v1",
