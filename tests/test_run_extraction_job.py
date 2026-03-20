@@ -13,6 +13,9 @@ class FakeResponse:
         self.text = text
         self.ok = ok
 
+    def json(self):
+        return json.loads(self.text)
+
 
 class RunExtractionJobTests(unittest.TestCase):
     def test_determine_status(self):
@@ -290,6 +293,38 @@ class RunExtractionJobTests(unittest.TestCase):
 
         self.assertEqual(transcript, "Hello world")
         self.assertIsNone(error)
+
+    def test_summarize_visual_semantics_calls_nvidia_once_per_image(self):
+        responses = [
+            FakeResponse(text=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": "First frame shows a crowded airport terminal."
+                    }
+                }]
+            })),
+            FakeResponse(text=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": "Second frame shows long security lines."
+                    }
+                }]
+            })),
+        ]
+
+        frame_artifacts = [
+            {"kind": "image", "url": "data:image/jpeg;base64,ZmFrZQ==", "timestamp_ms": 0},
+            {"kind": "image", "url": "data:image/jpeg;base64,ZmFrZTI=", "timestamp_ms": 20000},
+        ]
+
+        with patch.dict(run_extraction_job.os.environ, {"NVIDIA_API_KEY": "fixture-key"}):
+            with patch.object(run_extraction_job.requests, "post", side_effect=responses) as mock_post:
+                summary, error = run_extraction_job.summarize_visual_semantics(frame_artifacts)
+
+        self.assertIsNone(error)
+        self.assertEqual(mock_post.call_count, 2)
+        self.assertIn("First frame shows a crowded airport terminal.", summary)
+        self.assertIn("Second frame shows long security lines.", summary)
 
 
 if __name__ == "__main__":

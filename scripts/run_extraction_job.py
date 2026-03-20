@@ -586,50 +586,71 @@ def summarize_visual_semantics(frame_artifacts: list[dict[str, Any]]) -> tuple[s
     nvidia_key = os.environ.get("NVIDIA_API_KEY", "").strip()
     if not nvidia_key:
         return None, "NVIDIA_API_KEY is not configured for vision summarization."
-    image_parts = []
+    image_urls = []
     for artifact in frame_artifacts[:3]:
         url = normalize_text((artifact or {}).get("url"))
         if url.startswith("data:image/"):
-            image_parts.append({"type": "image_url", "image_url": {"url": url}})
-    if not image_parts:
+            image_urls.append(url)
+    if not image_urls:
         return None, "No frame artifacts were available for vision summarization."
 
-    body = {
-        "model": "meta/llama-3.2-11b-vision-instruct",
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Describe only what is visibly shown in these images in 1 to 3 short factual sentences. Mention clearly visible text if present. Do not speculate.",
-                    },
-                    *image_parts,
-                ],
-            }
-        ],
-        "max_tokens": 200,
-        "temperature": 0.1,
-    }
+    summaries: list[str] = []
+    errors: list[str] = []
 
-    try:
-        response = requests.post(
-            "https://integrate.api.nvidia.com/v1/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {nvidia_key}",
-            },
-            data=json.dumps(body),
-            timeout=60,
-        )
-        if not response.ok:
-            return None, f"NVIDIA vision request failed with HTTP {response.status_code}: {response.text[:300]}"
-        data = response.json()
-        content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content"))
-        summary = normalize_text(content if isinstance(content, str) else "")
-        return (summary or None), None if summary else "NVIDIA vision returned no summary text."
-    except Exception as error:  # pragma: no cover - provider behavior
-        return None, str(error)
+    for image_url in image_urls:
+        body = {
+            "model": "meta/llama-3.2-11b-vision-instruct",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Describe only what is visibly shown in this image in 1 to 2 short factual sentences. Mention clearly visible text if present. Do not speculate.",
+                        },
+                        {"type": "image_url", "image_url": {"url": image_url}},
+                    ],
+                }
+            ],
+            "max_tokens": 160,
+            "temperature": 0.1,
+        }
+
+        try:
+            response = requests.post(
+                "https://integrate.api.nvidia.com/v1/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {nvidia_key}",
+                },
+                data=json.dumps(body),
+                timeout=60,
+            )
+            if not response.ok:
+                errors.append(f"HTTP {response.status_code}: {response.text[:200]}")
+                continue
+            data = response.json()
+            content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content"))
+            summary = normalize_text(content if isinstance(content, str) else "")
+            if summary:
+                summaries.append(summary)
+        except Exception as error:  # pragma: no cover - provider behavior
+            errors.append(str(error))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for summary in summaries:
+        key = summary.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(summary)
+
+    if deduped:
+        return normalize_text(" ".join(deduped[:2])) or None, None
+    if errors:
+        return None, f"NVIDIA vision request failed: {'; '.join(errors)}"
+    return None, "NVIDIA vision returned no summary text."
 
 
 def determine_status(completed: list[str], failed: list[str]) -> str:
